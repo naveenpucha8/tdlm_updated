@@ -24,18 +24,17 @@ def get_batch(sents, docs, tags, idx, doc_len, sent_len, tag_len, batch_size, pa
         y.append(pad(seq[1:], sent_len, pad_id))
         m.append([1.0]*(len(seq)-1) + [0.0]*(sent_len-len(seq)+1))
         if tags != None:
-            t.append(pad(tags[docid][:tag_len], tag_len, pad_id))
+	    t.append([])
+            #t.append(pad(tags[docid][:tag_len], tag_len, pad_id))
         else:
             t.append([])
-
     for i in xrange(batch_size - len(d)):
         d.append([pad_id]*doc_len)
         x.append([pad_id]*sent_len)
         y.append([pad_id]*sent_len)
         m.append([0.0]*sent_len)
-        t.append([pad_id]*tag_len)
-
-	return x, y, m, d, t
+        #t.append([pad_id]*tag_len)
+    return x, y, m, d, t
 
 def update_vocab(symbol, idxvocab, vocabxid):
     idxvocab.append(symbol)

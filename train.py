@@ -1,6 +1,7 @@
-
+import scipy.stats
 import sys, random, os, time, math
 import numpy as np
+from gensim import matutils
 import gensim.models as g
 # import codecs
 import constants as cf
@@ -18,47 +19,13 @@ def init_embedding(model, idxvocab):
 			word_emb.append(np.random.uniform(-0.5/model.vector_size, 0.5/model.vector_size, [model.vector_size,]))
 	return np.array(word_emb)
 
-def fetch_batch_and_train(sents, docs, tags, model, seq_len, i, (tm_costs, tm_words, lm_costs, lm_words), (m_tm_cost, m_tm_train, m_lm_cost,m_lm_train)):
-	x, y, m, d, t = get_batch(sents, docs, tags, i, cf.doc_len, seq_len, cf.tag_len, cf.batch_size, 0,(True if isinstance(model, LM) else False))
-
-	global tm_train
-
-	if isinstance(model, LM):
-		if cf.topic_number > 0:
-			tm_cost=m_tm_cost
-			lm_cost=m_lm_cost
-			# tm_cost, _, lm_cost, _ = sess.run([m_tm_cost, m_tm_train, m_lm_cost, m_lm_train], \
-		        # {model.x: x, model.y: y, model.lm_mask: m, model.doc: d, model.tag: t})
-		else:
-		    #pure lstm
-			tm_cost=m_tm_cost
-			lm_cost=m_lm_cost
-			# tm_cost, _, lm_cost, _ = sess.run([m_tm_cost, m_tm_train, m_lm_cost, m_lm_train], \
-		        # {model.x: x, model.y: y, model.lm_mask: m})
-	else:
-		tm_cost=m_tm_cost
-		lm_cost=m_lm_cost
-	    # tm_cost, _, lm_cost, _ = sess.run([m_tm_cost, m_tm_train, m_lm_cost, m_lm_train], \
-	        # {model.y: y, model.tm_mask: m, model.doc: d, model.tag: t})
-	print tm_cost
-	print "hi555"
-	if tm_cost != None:
-		tm_costs += tm_cost * cf.batch_size #keep track of full batch loss (not per example batch loss)
-		tm_words += np.sum(m)
-	if lm_cost != None:
-		lm_costs += lm_cost * cf.batch_size
-		lm_words += np.sum(m)
-
-	tm_train.varFunc(y,m,d,t)
-
-	return tm_costs, tm_words, lm_costs, lm_words
-
-
 def run_epoch(sents, docs, labels, tags, models, is_training):
 
     ####unsupervised topic and language model training####
 
     #generate the batches
+	global tm_train
+
 	tm_num_batches, lm_num_batches = int(math.ceil(float(len(sents[0]))/cf.batch_size)), int(math.ceil(float(len(sents[1]))/cf.batch_size))
 	batch_ids = [ (item, 0) for item in range(tm_num_batches) ] + [ (item, 1) for item in range(lm_num_batches) ]
 	seq_lens = (cf.tm_sent_len, cf.lm_sent_len)
@@ -66,22 +33,49 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 	random.shuffle(batch_ids)
 	random.shuffle(sents[0])
 	random.shuffle(sents[1])
+	optimizer = torch.optim.Adam(tm_train.parameters(), lr=0.01)
+	optimizer.zero_grad()
 
-	#set training and cost ops for topic and language model training
-	tm_cost_ops = (None, None, None, None)
-	lm_cost_ops = (None, None, None, None)
-	if models[0] != None:
-		tm_cost_ops = (models[0].tm_cost, (models[0].tm_train_op if is_training else None), None, None)
-	if models[1] != None:
-		lm_cost_ops = (None, None, models[1].lm_cost, (models[1].lm_train_op if is_training else None))
-	cost_ops = (tm_cost_ops, lm_cost_ops)
-
-	start_time = time.time()
 	lm_costs, tm_costs, lm_words, tm_words = 0.0, 0.0, 0.0, 0.0
 	for bi, (b, model_id) in enumerate(batch_ids):
 		if model_id==0:					#if language included comment this line
-			tm_costs, tm_words, lm_costs, lm_words = fetch_batch_and_train(sents[model_id], docs[model_id], tags,models[model_id], seq_lens[model_id], b, (tm_costs, tm_words, lm_costs, lm_words), cost_ops[model_id])
 
+			#optimizer = torch.optim.Adam(tm_train.parameters(), lr=0.01)
+			#optimizer.zero_grad()
+
+			x, y, m, d, t = get_batch(sents[model_id], docs[model_id], tags, b, cf.doc_len, seq_lens[model_id], cf.tag_len, cf.batch_size, 0,(True if isinstance(models[model_id], LM) else False))
+			doc_inputs = tm_train.pre(y,m,d,t)
+			tm_logits = tm_train(doc_inputs)
+		    lm_train.pre(x,m) 	
+			y=torch.autograd.Variable(torch.from_numpy(np.asarray(y)))
+			m=torch.autograd.Variable(torch.from_numpy(np.asarray(m)))
+
+			loss=torch.nn.CrossEntropyLoss()
+			tm_cost=loss(tm_logits,y.view(-1))
+			print tm_cost
+			#print tm_crossent.size()
+			#tm_crossent_m = tm_crossent * m.view(-1)
+			#tm_cost = torch.sum(tm_crossent_m) / batch_size
+			#print tm_logits
+
+			if is_training:
+				v=torch.mul(tm_train.topic_output_embedding,tm_train.topic_output_embedding)
+				vv=torch.sum(v)
+				topicnorm = tm_train.topic_output_embedding / torch.sqrt(vv)
+				print topicnorm.size()
+				temp=torch.mm(topicnorm,torch.t(topicnorm))-torch.autograd.Variable(torch.eye(10))
+				print temp.size()
+				uniqueness = torch.max(torch.max(torch.mul(temp,temp),1)[0],0)[0]
+				tm_cost += cf.alpha * uniqueness
+			#print temp
+			tm_costs += tm_cost * cf.batch_size #keep track of full batch loss (not per example batch loss)
+			print tm_costs
+			#tm_words += torch.autograd.Variable(np.sum(m))
+			#lm_costs += lm_cost * cf.batch_size
+			#lm_words += np.sum(m)
+
+			tm_costs.backward(retain_graph=True)
+			optimizer.step()
 
 
 random.seed(1)
@@ -90,7 +84,7 @@ np.random.seed(1)
 vocabxid = {}
 idxvocab = []
 
-wordvec = g.Word2Vec.load('./word2vec/imdb.bin')
+wordvec = g.Word2Vec.load('./word2vec1/skipgram.bin')
 word_embd_size = wordvec.vector_size
 
 idxvocab, vocabxid, tm_ignore = gen_vocab(cf.dummy_symbols, cf.train_corpus, cf.stopwords, cf.vocab_minfreq, cf.vocab_maxfreq)
@@ -111,9 +105,8 @@ for i in range(cf.epoch_size):
 	print "hello i am here3"
 	curr_ppl = run_epoch(valid_sents, valid_docs, None, None, (tm_valid, None), False)
 
-
 if cf.topic_number > 0:
 	print "\nTopics\n======"
-	topics, entropy = tm_train.get_topics(topn=20)
+	topics, entropy = tm_train.get_topics(topn=5)
 	for ti, t in enumerate(topics):
 		print "Topic", ti, "[", ("%.2f" % entropy[ti]), "] :", " ".join([ idxvocab[item] for item in t ])
