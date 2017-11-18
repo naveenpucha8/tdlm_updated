@@ -46,7 +46,7 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 			x, y, m, d, t = get_batch(sents[model_id], docs[model_id], tags, b, cf.doc_len, seq_lens[model_id], cf.tag_len, cf.batch_size, 0,(True if isinstance(models[model_id], LM) else False))
 			doc_inputs = tm_train.pre(y,m,d,t)
 			tm_logits = tm_train(doc_inputs)
-		    lm_train.pre(x,m) 	
+
 			y=torch.autograd.Variable(torch.from_numpy(np.asarray(y)))
 			m=torch.autograd.Variable(torch.from_numpy(np.asarray(m)))
 

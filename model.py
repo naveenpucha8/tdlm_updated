@@ -6,6 +6,7 @@ from gensim import matutils
 import torch.nn.functional as F
 from torch.autograd import Variable
 import constants as cf
+
 class TopicModel(torch.nn.Module):
     def __init__(self, is_training, vocab_size, batch_size, num_steps, num_classes, cf):
     	super(TopicModel, self).__init__()
@@ -95,6 +96,7 @@ class TopicModel(torch.nn.Module):
             best = matutils.argsort(zz.numpy(), topn=topn, reverse=True)
             topics.append(best)
             entropy.append(scipy.stats.entropy(zz.numpy()))
+
         return topics, entropy
 
 class LanguageModel(TopicModel):
@@ -104,10 +106,84 @@ class LanguageModel(TopicModel):
         self.lstm_word_embedding=torch.FloatTensor(vocab_size, 50).zero_()
         self.x = Variable(torch.IntTensor(num_steps),requires_grad=True)
      	self.lm_mask = Variable(torch.FloatTensor(num_steps),requires_grad=True)
+        # self.lm_softmax_w = Variable(torch.rand(cf.rnn_hidden_size, vocab_size),requires_grad=True)
 
-        if config.topic_number > 0:
+        if cf.topic_number > 0:
             self.w = Variable(torch.rand(cf.topic_embedding_size, cf.rnn_hidden_size),requires_grad=True)
             self.u = Variable(torch.rand(cf.rnn_hidden_size,  cf.rnn_hidden_size),requires_grad=True)
-            self.b = Variable(torch.rand(cf,rnn_hidden_size),requires_grad=True)
-        # self.lm_softmax_w = Variable(torch.rand(cf.rnn_hidden_size, vocab_size),requires_grad=True)
-        
+            self.b = Variable(torch.rand(cf.rnn_hidden_size),requires_grad=True)
+
+            #define lstm cell
+            #
+        self.lstm_cell = torch.nn.LSTMCell(None,cf.rnn_hidden_size, bias = True)
+        if self.is_training and cf.lm_keep_prob < 1.0:
+            self.lstm_cell = torch.nn.functional.dropout()
+
+    def pre(self, x):
+        self.topic_input=Variable(torch.FloatTensor(64,300,50))
+        count = -1
+        count2 = -1
+        self.x = x
+        for i in self.x:
+		count+=1
+		count2=-1
+        	for j in i:
+			count2+=1
+        		self.inputs[count,count2]=self.lstm_word_embedding[j]
+
+        if self.is_training and self.cf.lm_keep_prob < 1.0:
+            model = torch.nn.Dropout(cf.lm_keep_prob)
+            self.inputs = model(self.inputs)
+
+        inputs = [torch.squeeze(input_, 1) for input_ in torch.split(self.inputs, self.num_steps, 1)]
+
+        return self.inputs
+    #
+    def forward(self, inputs):
+        self.inputs = inputs
+
+    def sample(self, probs, temperature):
+        if temperature == 0:
+            return np.argmax(probs)
+
+        probs = probs.astype(torch.FloatTensor)
+        probs = np.log(probs) / temperature
+        probs = np.exp(probs) / math.fsum(np.exp(probs))
+        return np.argmax(np.random.multinomial(1, probs, 1))
+
+    def generate(self, conv_hidden, start_word_id, temperature, max_length, stop_word_id):
+        x = [[start_word_id]]
+        sent = [start_word_id]
+
+        for _ in xrange(max_length):
+            if type(conv_hidden) is np.ndarray:
+            #if conv_hidden != None:
+                probs, state = ([self.probs, self.state], \
+                    {self.x: x, self.initial_state: self.state, self.conv_hidden: conv_hidden})
+            else:
+                probs, state = ([self.probs, self.state], \
+                    {self.x: x, self.initial_state: self.state})
+            sent.append(self.sample(probs[0], temperature))
+            if sent[-1] == stop_word_id:
+                break
+            x = [[ sent[-1] ]]
+
+        return sent
+
+    def generate_on_topic(self, x, topic_id, start_word_id, temperature=1.0, max_length=30, stop_word_id=None):
+        if topic_id != -1:
+            count = -1
+            count2 = -1
+            self.x = x
+    	    for i in self.topic_id:
+        		count+=1
+        		count2=-1
+                	for j in i:
+        			count2+=1
+                		self.topic_input[count,count2]=self.topic_output_embedding[j]
+            topic_emb = self.topic_emb.unsqueeze(self.topic_input,0)
+
+        else:
+            topic_emb = None
+
+        return self.generate(topic_emb, start_word_id, temperature, max_length, stop_word_id)
