@@ -25,6 +25,7 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 
     #generate the batches
 	global tm_train
+	global lm_train
 
 	tm_num_batches, lm_num_batches = int(math.ceil(float(len(sents[0]))/cf.batch_size)), int(math.ceil(float(len(sents[1]))/cf.batch_size))
 	batch_ids = [ (item, 0) for item in range(tm_num_batches) ] + [ (item, 1) for item in range(lm_num_batches) ]
@@ -44,8 +45,12 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 			#optimizer.zero_grad()
 
 			x, y, m, d, t = get_batch(sents[model_id], docs[model_id], tags, b, cf.doc_len, seq_lens[model_id], cf.tag_len, cf.batch_size, 0,(True if isinstance(models[model_id], LM) else False))
+
 			doc_inputs = tm_train.pre(y,m,d,t)
 			tm_logits = tm_train(doc_inputs)
+
+			doc1_inputs = lm_train.pre(x)
+			lm_logits = lm_train(doc1_inputs)
 
 			y=torch.autograd.Variable(torch.from_numpy(np.asarray(y)))
 			m=torch.autograd.Variable(torch.from_numpy(np.asarray(m)))
@@ -53,6 +58,10 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 			loss=torch.nn.CrossEntropyLoss()
 			tm_cost=loss(tm_logits,y.view(-1))
 			print tm_cost
+
+			loss=torch.nn.CrossEntropyLoss()
+			lm_cost=loss(lm_logits,x.view(-1))
+			print lm_cost
 			#print tm_crossent.size()
 			#tm_crossent_m = tm_crossent * m.view(-1)
 			#tm_cost = torch.sum(tm_crossent_m) / batch_size
@@ -70,11 +79,15 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 			#print temp
 			tm_costs += tm_cost * cf.batch_size #keep track of full batch loss (not per example batch loss)
 			print tm_costs
+
+			lm_costs += lm_cost * cf.batch_size
+			print lm_costs
 			#tm_words += torch.autograd.Variable(np.sum(m))
 			#lm_costs += lm_cost * cf.batch_size
 			#lm_words += np.sum(m)
 
 			tm_costs.backward(retain_graph=True)
+			lm_costs.backward(retain_graph=True)
 			optimizer.step()
 
 
@@ -98,6 +111,10 @@ tm_valid = TM(is_training=False, vocab_size=len(idxvocab), batch_size=cf.batch_s
 
 tm_train.conv_word_embedding = torch.from_numpy(init_embedding(wordvec, idxvocab))
 
+lm_train = LM(is_training=True, vocab_size=len(idxvocab), batch_size=cf.batch_size,num_steps=3, num_classes=num_classes, cf=cf)
+lm_valid = LM(is_training=True, vocab_size=len(idxvocab), batch_size=cf.batch_size,num_steps=3, num_classes=num_classes, cf=cf)
+
+lm_train.lstm_word_embedding = torch.from_numpy(init_embedding(wordvec, idxvocab))
 
 for i in range(cf.epoch_size):
 	print "hello i am here2"

@@ -115,11 +115,18 @@ class LanguageModel(TopicModel):
 
             #define lstm cell
             #
-        self.lstm_cell = torch.nn.LSTMCell(None,cf.rnn_hidden_size, bias = True)
-        if self.is_training and cf.lm_keep_prob < 1.0:
-            self.lstm_cell = torch.nn.functional.dropout()
+        print cf.rnn_hidden_size
+        arr=[]
+        self.lstm_cell = torch.nn.LSTMCell(0,cf.rnn_hidden_size, bias = True)
 
-    def pre(self, x):
+        if self.is_training and cf.lm_keep_prob < 1.0:
+            self.lstm_cell = torch.nn.Dropout(cf.lm_keep_prob)
+        self.cell = torch.nn.RNNCell([self.lstm_cell] * cf.rnn_layer_size)
+        self.initial_state = self.cell.zero_state(batch_size, tf.float32)
+        self.linear1=torch.nn.Linear(cf.rnn_hidden_size,vocab_size,bias=True)
+
+
+    def pre(self, x, m, d, t):
         self.topic_input=Variable(torch.FloatTensor(64,300,50))
         count = -1
         count2 = -1
@@ -137,10 +144,31 @@ class LanguageModel(TopicModel):
 
         inputs = [torch.squeeze(input_, 1) for input_ in torch.split(self.inputs, self.num_steps, 1)]
 
+        outputs, self.state = torch.nn.rnn(self.cell, inputs, initial_state=self.initial_state)
+
         return self.inputs
-    #
     def forward(self, inputs):
         self.inputs = inputs
+        lstm_hidden = torch.cat((torch.ones(1),outputs),0)
+        lstm_hidden = lstm_hidden.view(-1,cf.rnn_hidden_size)
+
+        if config.topic_number > 0:
+            z, r = array_ops.split(1, 2, linear([self.conv_hidden, lstm_hidden], \
+                2 * cf.rnn_hidden_size, True, 1.0))
+            z, r = torch.sigmoid(z), torch.sigmoid(r)
+            c = torch.tanh(torch.mul(self.conv_hidden, self.gate_w) + torch.matmul((r * lstm_hidden), self.gate_u) + \
+                self.gate_b)
+            hidden = (1-z)*lstm_hidden + z*c
+
+            self.tm_weights = tf.reshape(tf.reduce_mean(z, 1), [-1, num_steps])
+        else:
+            hidden = lstm_hidden
+
+        self.lm_logits=self.linear1(hidden)
+        self.lm_logits=F.log_softmax(self.tm_logits)
+        return lm_logits
+
+
 
     def sample(self, probs, temperature):
         if temperature == 0:
