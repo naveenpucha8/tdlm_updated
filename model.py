@@ -83,7 +83,7 @@ class TopicModel(torch.nn.Module):
         #print self.conv_hidden[0]
 	self.tm_logits=self.linear1(self.conv_hidden)
 	self.tm_logits=F.log_softmax(self.tm_logits)
-        self.tm_cost=0
+        self.tm_cost=10
         return self.tm_logits
     def get_topics(self,  topn):
         topics = []
@@ -116,51 +116,58 @@ class LanguageModel(TopicModel):
             #define lstm cell
             #
         print cf.rnn_hidden_size
-        arr=[]
-        self.lstm_cell = torch.nn.LSTMCell(0,cf.rnn_hidden_size, bias = True)
-
-        if self.is_training and cf.lm_keep_prob < 1.0:
-            self.lstm_cell = torch.nn.Dropout(cf.lm_keep_prob)
-        self.cell = torch.nn.RNNCell([self.lstm_cell] * cf.rnn_layer_size)
-        self.initial_state = self.cell.zero_state(batch_size, tf.float32)
+        self.lstm_cell = torch.nn.LSTM(0,cf.rnn_hidden_size,dropout=0.6)
+        print self.lstm_cell
+        # if self.is_training and cf.lm_keep_prob < 1.0:
+        #     self.lstm_cell = torch.nn.Dropout(cf.lm_keep_prob)
+        self.cell = self.lstm_cell
+        # self.cell = torch.nn.RNN([self.lstm_cell]*cf.rnn_layer_size,)
+        # inp = Variable(torch.randn(64,240))
+        # self.initial_state = self.cell(inp,(0,0))
+        self.initial_state = self.cell(batch_size, torch.FloatTensor)
         self.linear1=torch.nn.Linear(cf.rnn_hidden_size,vocab_size,bias=True)
 
 
-    def pre(self, x, m, d, t):
-        self.topic_input=Variable(torch.FloatTensor(64,300,50))
+    def pre(self, x):
+        inputs=Variable(torch.FloatTensor(64,300,50))
         count = -1
         count2 = -1
+        # print self.conv_hidden
         self.x = x
         for i in self.x:
 		count+=1
 		count2=-1
         	for j in i:
 			count2+=1
-        		self.inputs[count,count2]=self.lstm_word_embedding[j]
+        		inputs[count,count2]=self.lstm_word_embedding[j]
 
         if self.is_training and self.cf.lm_keep_prob < 1.0:
             model = torch.nn.Dropout(cf.lm_keep_prob)
-            self.inputs = model(self.inputs)
+            inputs = model(inputs)
 
-        inputs = [torch.squeeze(input_, 1) for input_ in torch.split(self.inputs, self.num_steps, 1)]
+        inputs = [torch.squeeze(input_, 1) for input_ in torch.split(inputs, self.num_steps, 1)]
 
-        outputs, self.state = torch.nn.rnn(self.cell, inputs, initial_state=self.initial_state)
+        # outputs, self.state = torch.nn.rnn(self.cell, inputs, initial_state=self.initial_state)
+        # print inputs
 
-        return self.inputs
-    def forward(self, inputs):
+        return inputs
+    def forward(self, inputs, conv_hidden):
+
         self.inputs = inputs
+
+        outputs, self.state = self.cell(self.inputs,(0,0))
         lstm_hidden = torch.cat((torch.ones(1),outputs),0)
         lstm_hidden = lstm_hidden.view(-1,cf.rnn_hidden_size)
 
         if config.topic_number > 0:
-            z, r = array_ops.split(1, 2, linear([self.conv_hidden, lstm_hidden], \
+            z, r = array_ops.split(1, 2, linear([conv_hidden, lstm_hidden], \
                 2 * cf.rnn_hidden_size, True, 1.0))
             z, r = torch.sigmoid(z), torch.sigmoid(r)
-            c = torch.tanh(torch.mul(self.conv_hidden, self.gate_w) + torch.matmul((r * lstm_hidden), self.gate_u) + \
+            c = torch.tanh(torch.mul(conv_hidden, self.gate_w) + torch.matmul((r * lstm_hidden), self.gate_u) + \
                 self.gate_b)
             hidden = (1-z)*lstm_hidden + z*c
-
-            self.tm_weights = tf.reshape(tf.reduce_mean(z, 1), [-1, num_steps])
+            self.tm_weights = torch.mean(z,1)
+            self.tm_weights = self.tm_weights.view(-1,num_steps)
         else:
             hidden = lstm_hidden
 
