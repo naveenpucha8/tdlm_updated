@@ -10,11 +10,11 @@ import constants as cf
 def pad(lst, max_len, pad_symbol):
     return lst + [pad_symbol] * (max_len - len(lst))
 
-def get_batch(sents, docs, tags, idx, doc_len, sent_len, tag_len, batch_size, pad_id, lang_model):
+def get_batch(sents, docs, tags, idx, doc_len, sent_len, tag_len, batch_size, pad_id, remove_curr):
     x, y, m, d, t = [], [], [], [], []
-    #lang_model is used for language modelling only so that we could use same function for both.
+
     for docid, seqid, seq in sents[(idx*batch_size):((idx+1)*batch_size)]:
-        if lang_model:
+        if remove_curr:
             dw = docs[docid][:seqid] + docs[docid][(seqid+1):]
         else:
             dw = docs[docid]
@@ -23,19 +23,32 @@ def get_batch(sents, docs, tags, idx, doc_len, sent_len, tag_len, batch_size, pa
         x.append(pad(seq[:-1], sent_len, pad_id))
         y.append(pad(seq[1:], sent_len, pad_id))
         m.append([1.0]*(len(seq)-1) + [0.0]*(sent_len-len(seq)+1))
+        if tags != None:
+	    t.append([])
+            #t.append(pad(tags[docid][:tag_len], tag_len, pad_id))
+        else:
+            t.append([])
     for i in xrange(batch_size - len(d)):
         d.append([pad_id]*doc_len)
         x.append([pad_id]*sent_len)
         y.append([pad_id]*sent_len)
         m.append([0.0]*sent_len)
+        #t.append([pad_id]*tag_len)
     return x, y, m, d, t
 
 def update_vocab(symbol, idxvocab, vocabxid):
     idxvocab.append(symbol)
     vocabxid[symbol] = len(idxvocab) - 1 
 
-def sents_(line,vocabxid,ignore):
-		#every lm_sents starts with start symbol and end only after all the tokens
+def gen_data(vocabxid, dummy_symbols, ignore, corpus):
+	sents = ([], []) #tuple of (tm_sents, lm_sents); each element is [(doc_id, seq_id, seq)]
+	docs = ([], []) 
+	sent_lens = [] #original sentence lengths
+	doc_lens = [] #original document lengths
+	docids = [] #original document IDs
+
+	for line_id, line in enumerate(codecs.open(corpus, "r", "utf-8")):
+		#every tm_sents starts with start symbol and end only after all the tokens
 		tm_sents=[]
 		tm_sents.append(vocabxid[cf.start_symbol])
 		lm_sents=[]
@@ -46,25 +59,13 @@ def sents_(line,vocabxid,ignore):
 			for word in token.strip().split():
 				if word in vocabxid:
 					sent.append(vocabxid[word])
-					if vocabxid[word] not in ignore:
-						if re.compile("[0-9]+").search(word)==None:
-                        				tm_sents.append(vocabxid[word])
+					if (vocabxid[word] not in ignore):
+                        			tm_sents.append(vocabxid[word])
 				else:
                     			sent.append(vocabxid[cf.unk_symbol])
-			sent.append(vocabxid[cf.end_symbol])
+				sent.append(vocabxid[cf.end_symbol])
 			lm_sents.append(sent)
-		return lm_sents,tm_sents
 
-def gen_data(vocabxid, dummy_symbols, ignore, corpus):
-	sents = ([], []) #tuple of (tm_sents, lm_sents); each element is [(doc_id, seq_id, seq)]
-	docs = ([], []) 
-	sent_lens = [] #original sentence lengths
-	doc_lens = [] #original document lengths
-	docids = [] #original document IDs
-
-	for line_id, line in enumerate(codecs.open(corpus, "r", "utf-8")):
-
-		lm_sents, tm_sents = sents_(line,vocabxid,ignore)
 		if len(tm_sents)>1:
 			docids.append(line_id)
 			sent_lens.extend([len(item)-1 for item in lm_sents])

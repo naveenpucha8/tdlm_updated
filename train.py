@@ -46,10 +46,17 @@ def run_epoch(sents, docs, labels, tags, models, is_training):
 
 			x, y, m, d, t = get_batch(sents[model_id], docs[model_id], tags, b, cf.doc_len, seq_lens[model_id], cf.tag_len, cf.batch_size, 0,(True if isinstance(models[model_id], LM) else False))
 			doc_inputs = tm_train.pre(y,m,d,t)
+			# print doc_inputs,"111"
+			print "yo bbafd"
+			print doc_inputs.size()
 			tm_logits = tm_train(doc_inputs)
 			# print tm_train.conv_hidden
-
+			# print x,"sss"
 			doc1_inputs = lm_train.pre(x)
+			print "yo bbafd"
+			print doc1_inputs.size()
+			# print doc1_inputs,"225"
+			# print "u am here"
 			lm_logits = lm_train(doc1_inputs, tm_train.conv_hidden)
 
 			y=torch.autograd.Variable(torch.from_numpy(np.asarray(y)))
@@ -97,7 +104,7 @@ np.random.seed(1)
 vocabxid = {}
 idxvocab = []
 
-wordvec = g.Word2Vec.load('./word2vec1/skipgram.bin')
+wordvec = g.Word2Vec.load('./word2vec/bnc.bin')
 word_embd_size = wordvec.vector_size
 
 idxvocab, vocabxid, tm_ignore = gen_vocab(cf.dummy_symbols, cf.train_corpus, cf.stopwords, cf.vocab_minfreq, cf.vocab_maxfreq)

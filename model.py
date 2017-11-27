@@ -6,6 +6,7 @@ from gensim import matutils
 import torch.nn.functional as F
 from torch.autograd import Variable
 import constants as cf
+from torch.nn.utils.rnn import pack_padded_sequence as pack, pad_packed_sequence as unpack
 
 class TopicModel(torch.nn.Module):
     def __init__(self, is_training, vocab_size, batch_size, num_steps, num_classes, cf):
@@ -14,13 +15,13 @@ class TopicModel(torch.nn.Module):
  	self.doc = Variable(torch.IntTensor(cf.doc_len),requires_grad=True)
  	self.y = Variable(torch.IntTensor(num_steps),requires_grad=True)
  	self.tm_mask = Variable(torch.FloatTensor(num_steps),requires_grad=True)
- 	self.conv_word_embedding=torch.FloatTensor(vocab_size, 50).zero_()
+ 	self.conv_word_embedding=torch.FloatTensor(vocab_size, 30).zero_()
         self.topic_output_embedding = Variable(torch.rand(cf.k,cf.topic_embedding_size),requires_grad=True)
         self.topic_input_embedding = Variable(torch.rand(cf.k,self.conv_size),requires_grad=True)
         #Now defining the conv and linear layers
         #conv1 for forming the document vector d of size a
-        self.conv1=torch.nn.Conv2d(1,cf.filter_number,(cf.filter_sizes,50), stride=(1,1), padding=0)
-	self.conv1.weights=torch.rand(cf.filter_sizes,50)
+        self.conv1=torch.nn.Conv2d(1,cf.filter_number,(cf.filter_sizes,30), stride=(1,1), padding=0)
+	self.conv1.weights=torch.rand(cf.filter_sizes,30)
         #Linear layer for tm_logits from conv_hidden values #Take Care
         self.linear1=torch.nn.Linear(cf.topic_embedding_size,vocab_size,bias=True)
 	self.linear1.weights=torch.rand(cf.topic_embedding_size,vocab_size)
@@ -37,7 +38,9 @@ class TopicModel(torch.nn.Module):
         self.tag = t
 	count=-1
 	count2=-1
-        self.doc_inputs=Variable(torch.FloatTensor(64,300,50))
+        # print self.doc,"yy"
+        self.doc_inputs=Variable(torch.FloatTensor(64,300,30))
+        # print self.doc[0],"ss"
 	for i in self.doc:
 		count+=1
 		count2=-1
@@ -58,7 +61,7 @@ class TopicModel(torch.nn.Module):
 
 	#doc_inputs=doc_inputs.unsqueeze(-1)
 	#doc_inputs=doc_inputs.repeat(1,1,1,self.cf.filter_number)
-	print doc_inputs.size()
+	# print doc_inputs.size()
 	output=self.conv1(doc_inputs)
 	h=F.max_pool2d(output,(299,1), stride=(1,1), padding=0)
 	pooled_outputs=[]
@@ -103,11 +106,11 @@ class LanguageModel(TopicModel):
     def __init__(self, is_training, vocab_size, batch_size, num_steps, num_classes, cf):
         if cf.topic_number > 0:
              TopicModel.__init__(self, is_training, vocab_size, batch_size, num_steps, 0, cf)
-        self.lstm_word_embedding=torch.FloatTensor(vocab_size, 50).zero_()
-        self.x = Variable(torch.IntTensor(num_steps),requires_grad=True)
+        self.lstm_word_embedding=torch.FloatTensor(vocab_size, 30).zero_()
+        self.x = Variable(torch.IntTensor(64),requires_grad=True)
      	self.lm_mask = Variable(torch.FloatTensor(num_steps),requires_grad=True)
         # self.lm_softmax_w = Variable(torch.rand(cf.rnn_hidden_size, vocab_size),requires_grad=True)
-
+	self.gru=torch.nn.GRU(5,60,1)
         if cf.topic_number > 0:
             self.w = Variable(torch.rand(cf.topic_embedding_size, cf.rnn_hidden_size),requires_grad=True)
             self.u = Variable(torch.rand(cf.rnn_hidden_size,  cf.rnn_hidden_size),requires_grad=True)
@@ -116,37 +119,52 @@ class LanguageModel(TopicModel):
             #define lstm cell
             #
         print cf.rnn_hidden_size
-        self.lstm_cell = torch.nn.LSTM(0,cf.rnn_hidden_size,dropout=0.6)
-        print self.lstm_cell
+        self.lstm_cell = torch.nn.LSTM(input_size=30 ,hidden_size=cf.rnn_hidden_size,num_layers=cf.rnn_layer_size,dropout=0.6)
+	#self.gru=torch.nn.GRU(input_size=60,		
+        self.num_steps =num_steps
         # if self.is_training and cf.lm_keep_prob < 1.0:
         #     self.lstm_cell = torch.nn.Dropout(cf.lm_keep_prob)
         self.cell = self.lstm_cell
         # self.cell = torch.nn.RNN([self.lstm_cell]*cf.rnn_layer_size,)
         # inp = Variable(torch.randn(64,240))
         # self.initial_state = self.cell(inp,(0,0))
-        self.initial_state = self.cell(batch_size, torch.FloatTensor)
+        # self.initial_state = self.cell(batch_size, torch.FloatTensor)
+        temp = torch.FloatTensor()
+        self.initial_state = (torch.autograd.Variable(temp.new(cf.rnn_layer_size,batch_size,cf.rnn_hidden_size).zero_())
+                              ,torch.autograd.Variable(temp.new(cf.rnn_layer_size,batch_size,cf.rnn_hidden_size).zero_()))
+        # print self.initial_state[0]
+        # print self.initial_state
         self.linear1=torch.nn.Linear(cf.rnn_hidden_size,vocab_size,bias=True)
 
 
     def pre(self, x):
-        inputs=Variable(torch.FloatTensor(64,300,50))
+        # print inputs
         count = -1
         count2 = -1
         # print self.conv_hidden
         self.x = x
+        print self.x,"555"
+        print self.lstm_word_embedding,"5sss55"
+        inputs=Variable(torch.FloatTensor(64,3,30))
         for i in self.x:
-		count+=1
-		count2=-1
-        	for j in i:
-			count2+=1
-        		inputs[count,count2]=self.lstm_word_embedding[j]
+            count+=1
+            count2=-1
 
+            for j in i:
+
+                count2+=1
+                inputs[count,count2]=self.lstm_word_embedding[j]
+        print inputs[0][0]
         if self.is_training and self.cf.lm_keep_prob < 1.0:
             model = torch.nn.Dropout(cf.lm_keep_prob)
             inputs = model(inputs)
+        # print inputs,"eee"
+        #inputs = [torch.squeeze(input_, [1]) for input_ in torch.split(inputs, 64, 1)]
+        print inputs.size()
+        # inputs = inputs.unsqueeze(1)
+        # inputs = [torch.unsqueeze(input_, 1) for input_ in torch.split(inputs, self.num_steps, 1)]
 
-        inputs = [torch.squeeze(input_, 1) for input_ in torch.split(inputs, self.num_steps, 1)]
-
+        # inputs = inputs.unsqueeze(1)
         # outputs, self.state = torch.nn.rnn(self.cell, inputs, initial_state=self.initial_state)
         # print inputs
 
@@ -154,20 +172,34 @@ class LanguageModel(TopicModel):
     def forward(self, inputs, conv_hidden):
 
         self.inputs = inputs
-
-        outputs, self.state = self.cell(self.inputs,(0,0))
-        lstm_hidden = torch.cat((torch.ones(1),outputs),0)
-        lstm_hidden = lstm_hidden.view(-1,cf.rnn_hidden_size)
-
-        if config.topic_number > 0:
+        # print len(self.initial_state)
+        # print inputs[0]
+        # print inputs
+        # print self.initial_state
+        print self.initial_state
+	self.inputs=self.inputs.permute(1,0,2)
+        outputs, self.state = self.lstm_cell(self.inputs,self.initial_state)
+	#lstm_hidden = torch.cat([Variable(torch.ones(1)),outputs],0)
+        lstm_hidden = outputs.view(-1,cf.rnn_hidden_size)
+        print "hello"
+	print lstm_hidden
+	print conv_hidden
+        if cf.topic_number > 0:
+	    '''	
             z, r = array_ops.split(1, 2, linear([conv_hidden, lstm_hidden], \
                 2 * cf.rnn_hidden_size, True, 1.0))
             z, r = torch.sigmoid(z), torch.sigmoid(r)
             c = torch.tanh(torch.mul(conv_hidden, self.gate_w) + torch.matmul((r * lstm_hidden), self.gate_u) + \
-                self.gate_b)
+                self.gate_b)		
             hidden = (1-z)*lstm_hidden + z*c
-            self.tm_weights = torch.mean(z,1)
-            self.tm_weights = self.tm_weights.view(-1,num_steps)
+            #self.tm_weights = torch.mean(z,1)
+            #self.tm_weights = self.tm_weights.view(-1,num_steps)
+	    '''
+	    lstm_hidden=lstm_hidden.unsqueeze(0)
+	    lstm_hidden=lstm_hidden.permute(1,0,2)
+	    conv_hidden=conv_hidden.unsqueeze(0)
+	    conv_hidden=conv_hidden.permute(1,0,2)
+	    hidden=Variable(torch.FloatTensor(list(self.gru(conv_hidden,lstm_hidden))))
         else:
             hidden = lstm_hidden
 
